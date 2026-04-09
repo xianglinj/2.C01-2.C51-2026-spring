@@ -1,0 +1,366 @@
+%% dyn_suite_manual.tex
+%% User's Manual for the Dynamical Estimation Suite (MATLAB and Python)
+%% Compile with: pdflatex dyn_suite_manual.tex  (twice for references)
+
+\documentclass[10pt]{article}
+
+\usepackage[margin=1.9cm, top=2.2cm, bottom=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\setlist{nosep, leftmargin=1.5em}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+\titlespacing{\section}{0pt}{1.2ex}{0.6ex}
+\titlespacing{\subsection}{0pt}{0.8ex}{0.3ex}
+
+%% Code listing style
+\definecolor{codebg}{gray}{0.95}
+\definecolor{codeframe}{gray}{0.75}
+\definecolor{kwcolor}{rgb}{0.0,0.3,0.7}
+\definecolor{cmtcolor}{rgb}{0.3,0.5,0.3}
+\definecolor{strcolor}{rgb}{0.6,0.1,0.1}
+
+\lstset{
+	backgroundcolor=\color{codebg},
+	frame=single, framerule=0.4pt, frameround=ffff,
+	rulecolor=\color{codeframe},
+	basicstyle=\ttfamily\footnotesize,
+	keywordstyle=\color{kwcolor}\bfseries,
+	commentstyle=\color{cmtcolor}\itshape,
+	stringstyle=\color{strcolor},
+	breaklines=true, breakatwhitespace=true,
+	showstringspaces=false,
+	aboveskip=4pt, belowskip=4pt,
+	xleftmargin=6pt, xrightmargin=6pt,
+}
+
+\lstdefinestyle{matlab}{language=Matlab,
+	morekeywords={true,false,nargin,nargout,odeset,ode45}}
+\lstdefinestyle{python}{language=Python,
+	morekeywords={None,True,False,np,scipy}}
+
+%% Compact table column
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% -------------------------------------------------------------------------
+\begin{document}
+	
+	\begin{center}
+		{\LARGE\bfseries Dynamical Estimation Suite}\\[4pt]
+		{\large User's Manual}\\[6pt]
+		{\normalsize MIT 2.c01/2.c51 Physical Systems Modeling and Design Using Machine Learning}\\[4pt]
+		{\normalsize Sensitivity and Adjoint Methods for Parameter Estimation
+			in Dynamical Systems}\\[4pt]
+		{\small Directed by Prof. George Barbastathis; executed by Claude}
+	\end{center}
+	
+	\vspace{-2pt}
+	\noindent\rule{\linewidth}{0.8pt}
+	\vspace{4pt}
+	
+	The suite implements gradient-descent estimation of the parameter vector
+	$\mathbf{w}$ and initial condition $\mathbf{x}_0$ for a dynamical system
+	\[
+	\dot{\mathbf{x}}(t) = \mathbf{h}(\mathbf{x},t;\mathbf{w}),
+	\quad \mathbf{x}(0)=\mathbf{x}_0,
+	\]
+	from a time-series dataset $\{t_n, \mathbf{x}_n\}_{n=1}^N$ by minimising the
+	$\ell_2$ loss $\mathcal{E}=\frac{1}{2N}\sum_n\|\boldsymbol{\varepsilon}_n\|^2$.
+	Two equivalent algorithms are provided: the \textit{sensitivity method}
+	(reliable, cost $\propto KP$ per iteration) and the \textit{adjoint method}
+	(efficient, cost $\propto K$ per iteration). The second method, for better numerical stability, has been implemented with continuous gradient
+	accumulation and checkpointing.
+	
+	% ==========================================================================
+	\section{MATLAB Suite}
+	% ==========================================================================
+	
+	\subsection{Requirements and file structure}
+	
+	MATLAB R2018b or later; no additional toolboxes required.
+	Place all \texttt{.m} files on the MATLAB path.
+	
+	\medskip
+	\noindent
+	\begin{tabular}{@{}L{5.8cm}L{9.5cm}@{}}
+		\toprule
+		File & Purpose \\
+		\midrule
+		\texttt{dyn\_forward.m}            & Forward ODE solve; stores all internal RK45 steps \\
+		\texttt{dyn\_residuals.m}          & Residuals $\boldsymbol{\varepsilon}$ and loss function $\mathcal{E}$ \\
+		\texttt{dyn\_sensitivity.m}        & Augmented $(x,s,s_\mathrm{ic})$ ODE \\
+		\texttt{dyn\_adjoint.m}            & Backward ODE with gradient accumulator and checkpointing \\
+		\texttt{dyn\_update\_sensitivity.m}& Parameter update via sensitivity \\
+		\texttt{dyn\_update\_adjoint.m}    & Parameter update via adjoint \\
+		\texttt{dyn\_estimate\_sensitivity.m} & Full sensitivity estimation loop \\
+		\texttt{dyn\_estimate\_adjoint.m}  & Full adjoint estimation loop \\
+		\texttt{dyn\_run.m}                & Grand pipeline (calls all of the above) \\
+		\texttt{dyn\_plot\_forward.m}      & Plot trajectory $+$ data \\
+		\texttt{dyn\_plot\_sensitivity.m}  & Plot $\mathbf{s}(t)$ or $\mathbf{s}_\mathrm{ic}(t)$ \\
+		\texttt{dyn\_plot\_adjoint.m}      & Plot $\mathbf{a}(t)$ with jump gaps \\
+		\texttt{dyn\_plot\_residual\_force.m} & Stem plot of $\mathbf{v}(t)$ \\
+		\texttt{dyn\_plot\_loss.m}         & Loss history vs.\ iteration \\
+		\texttt{lv\_h.m, lv\_J.m, lv\_U.m, lv\_test.m} & Lotka--Volterra example \\
+		\bottomrule
+	\end{tabular}
+	
+	\subsection{Defining your dynamical system}
+	
+	Provide three function handles with the calling convention
+	\texttt{f(x,\,t,\,w)}, where \texttt{x} is $(K{\times}1)$,
+	\texttt{t} is a scalar, and \texttt{w} is $(P{\times}1)$.
+	
+	\begin{lstlisting}[style=matlab]
+		h_fun    = @(x, t, w)  ...;   % (K x 1)   plant operator  h(x,t;w)
+		J_fun    = @(x, t, w)  ...;   % (K x K)   Jacobian        dh/dx
+		U_fun    = @(x, t, w)  ...;   % (K x P)   plant sens.     dh/dw
+		U_ic_fun = [];                  % (K x K) pass [] if, as is usual, 
+		                                % h does not depend on x0
+	\end{lstlisting}
+	
+	For the Lotka--Volterra example (\texttt{lv\_h.m} etc.)
+	with $\mathbf{w}=[w_{11},w_{13},w_{21},w_{23}]^\dagger$:
+	\begin{lstlisting}[style=matlab]
+		function dx = lv_h(x, t, w)
+		dx = [w(1)*x(1) - w(2)*x(1)*x(2);
+		-w(3)*x(2) + w(4)*x(1)*x(2)];
+		end
+	\end{lstlisting}
+	
+	\pagebreak
+	
+	\subsection{Quick start: running \texttt{dyn\_run}}
+	
+	\vspace{6pt}
+	
+	\begin{lstlisting}[style=matlab]
+		t_data = linspace(0.5, 20, 120);   % sampling times
+		
+		% Stopping: stop if windowed (W=15) mean loss decreases by < 1e-6
+		plot_opts.idx_state   = [1, 2];     % state components to plot
+		plot_opts.idx_sens    = [1 1; 1 2]; % [k,p] pairs for S (1-based)
+		plot_opts.idx_sens_ic = [];         % skip S_ic plot
+		plot_opts.idx_adj     = [1, 2];
+		plot_opts.idx_resi    = [1, 2];
+		plot_opts.log_scale   = true;
+		plot_opts.fig_offset  = 1;
+		
+		results = dyn_run(h_fun, J_fun, U_fun, U_ic_fun, ...
+		w_true, x0_true, w_init, x0_init, [], ...  % S0=[]
+		t_data, alpha, beta, ...
+		M, 1e-6, 15, false, ...        % M, E_frac_stop, M_check_stop, stop_on_increase
+		'my_results.mat', [], ...      % save path, ode_opts ([] = defaults)
+		true, plot_opts);              % verbose, plot_opts
+	\end{lstlisting}
+	
+	\subsection{Key function signatures}
+	
+	\begin{tabular}{@{}L{7.5cm}L{7.8cm}@{}}
+		\toprule
+		Signature & Returns \\
+		\midrule
+		\texttt{dyn\_forward(h,w,x0,t\_data)} &
+		\texttt{x\_tdata(K$\times$N)}, \texttt{t\_sol(1$\times$S)}, \texttt{x\_sol(K$\times$S)} \\
+		\texttt{dyn\_residuals(x\_tdata, x\_data)} &
+		\texttt{resi(K$\times$N)}, \texttt{loss} \\
+		\texttt{dyn\_sensitivity(h,J,U,Uic,w,x0,S0,t)} &
+		\texttt{S\_tdata(K$\times$P$\times$N)}, \texttt{S\_ic\_tdata}, \texttt{x\_tdata}, \texttt{t\_sol}, \texttt{x\_sol}, \texttt{S\_sol(K$\times$P$\times$S)}, \texttt{S\_ic\_sol} \\
+		\texttt{dyn\_adjoint(J,U,w,t\_sol,x\_sol,t,resi,...h,x0,x\_tdata)} & \\ % $\qquad \qquad \qquad $ (continued below) \\
+		& 
+		\texttt{a\_tdata(K$\times$N)}, \texttt{a\_0(K$\times$1)}, \texttt{grad\_w(P$\times$1)}, \texttt{t\_adj}, \texttt{a\_adj} \\
+		\texttt{dyn\_estimate\_sensitivity(...)} &
+		\texttt{w\_hat(P$\times$1)}, \texttt{x0\_hat(K$\times$1)}, \texttt{loss\_hist} \\
+		\texttt{dyn\_estimate\_adjoint(...)} &
+		\texttt{w\_hat}, \texttt{x0\_hat}, \texttt{loss\_hist} \\
+		\bottomrule
+	\end{tabular}
+	
+	\subsection{Stopping criteria}
+	
+	Both estimation functions accept four stopping arguments (after \texttt{M}):
+	
+	\medskip
+	\begin{tabular}{@{}L{3.5cm}L{9.8cm}@{}}
+		\texttt{E\_frac\_stop} & Fractional-decrease threshold; \texttt{0} disables early stopping. \\
+		\texttt{M\_check\_stop} & Window size $W$; stop if
+		$(\bar{\mathcal{E}}^{[m-W:m-1]}-\bar{\mathcal{E}}^{[m-W+1:m]})/\bar{\mathcal{E}}^{[m-W:m-1]} < \texttt{E\_frac\_stop}$.
+		Set \texttt{1} for the single-step criterion. \\
+		\texttt{stop\_on\_increase} & If \texttt{false} (default), windowed loss
+		increases trigger a warning but do not stop the loop — useful for
+		studying the effect of noisy data or large learning rates when the gradient descent misbehaves. \\
+	\end{tabular}
+	
+	\subsection{Output files}
+	
+	\texttt{dyn\_run} writes three outputs alongside the \texttt{.mat} file:
+	
+	\begin{itemize}
+		\item \textbf{\texttt{my\_results.mat}} — \texttt{results} struct with all
+		trajectories, sensitivities, adjoints, loss histories, and estimates.
+		\item \textbf{\texttt{my\_results.tex}} — \texttt{booktabs} table comparing
+		ground truth, sensitivity estimate, and adjoint estimate.
+		\item \textbf{\texttt{figures/my\_results\_*.png}} — one 300\,dpi PNG per
+		figure (10 files in a full verbose run, fewer if \texttt{idx\_sens\_ic} is empty).
+	\end{itemize}
+	
+	\pagebreak
+	
+	% ==========================================================================
+	\section{Python Suite}
+	% ==========================================================================
+	
+	\subsection{Requirements and package structure}
+	
+	Python 3.8+, with \texttt{numpy}, \texttt{scipy}, and \texttt{matplotlib}.
+	Install dependencies via \texttt{pip install numpy scipy matplotlib}.
+	
+	\medskip
+	\noindent
+	\begin{tabular}{@{}L{4.3cm}L{9cm}@{}}
+		\toprule
+		File & Purpose \\
+		\midrule
+		\texttt{dyn\_suite/\_\_init\_\_.py} & Package entry point; re-exports all public functions \\
+		\texttt{dyn\_suite/forward.py}      & \texttt{dyn\_forward}, \texttt{dyn\_residuals} \\
+		\texttt{dyn\_suite/sensitivity.py}  & \texttt{dyn\_sensitivity}, \texttt{dyn\_update\_sensitivity} \\
+		\texttt{dyn\_suite/adjoint.py}      & \texttt{dyn\_adjoint}, \texttt{dyn\_update\_adjoint} \\
+		\texttt{dyn\_suite/estimation.py}   & \texttt{dyn\_estimate\_sensitivity}, \texttt{dyn\_estimate\_adjoint} \\
+		\texttt{dyn\_suite/run.py}          & \texttt{dyn\_run} grand pipeline \\
+		\texttt{dyn\_suite/plotting.py}     & All five \texttt{dyn\_plot\_*} functions \\
+		\texttt{lv\_system.py}              & Lotka--Volterra \texttt{lv\_h}, \texttt{lv\_J}, \texttt{lv\_U} \\
+		\texttt{lv\_test.py}                & Test driver (mirrors \texttt{lv\_test.m}) \\
+		\bottomrule
+	\end{tabular}
+	
+	\subsection{Defining your dynamical system}
+	
+	Function calling conventions are identical to MATLAB;
+	all arrays are \texttt{numpy} arrays.
+	
+	\begin{lstlisting}[style=python]
+		import numpy as np
+		
+		def my_h(x, t, w):          # returns (K,) array
+		return np.array([...])
+		
+		def my_J(x, t, w):          # returns (K, K) array
+		return np.array([[...]])
+		
+		def my_U(x, t, w):          # returns (K, P) array
+		return np.array([[...]])
+		
+		U_ic_fun = None             # pass None if h does not depend on x0
+	\end{lstlisting}
+	
+	\subsection{Quick start: running \texttt{dyn\_run}}
+	
+	\vspace{6pt} 
+	
+	\begin{lstlisting}[style=python]
+		from dyn_suite import dyn_run
+		import numpy as np
+		
+		t_data = np.linspace(0.5, 20.0, 120)
+		
+		plot_opts = dict(
+		idx_state   = [0, 1],            # 0-based state indices
+		idx_sens    = [(0,0), (0,1)],    # (k, p) pairs, 0-based
+		idx_sens_ic = None,              # None to skip
+		idx_adj     = [0, 1],
+		idx_resi    = [0, 1],
+		log_scale   = True,
+		fig_offset  = 1,
+		)
+		
+		results = dyn_run(
+		my_h, my_J, my_U, None,         # U_ic_fun=None
+		w_true, x0_true, w_init, x0_init, None,  # S0=None
+		t_data, alpha, beta,
+		M=600, E_frac_stop=1e-6, M_check_stop=15, stop_on_increase=False,
+		save_path='my_results',          # writes .pkl, .tex, figures/
+		rtol=1e-8, atol=1e-10,
+		verbose=True, plot_opts=plot_opts)
+	\end{lstlisting}
+	
+	\subsection{Key function signatures}
+	
+	\begin{tabular}{@{}L{7.5cm}L{7.8cm}@{}}
+		\toprule
+		Signature & Returns \\
+		\midrule
+		\texttt{dyn\_forward(h,w,x0,t\_data)} &
+		\texttt{x\_tdata(K,N)}, \texttt{t\_sol(S,)}, \texttt{x\_sol(K,S)} \\
+		\texttt{dyn\_residuals(x\_tdata, x\_data)} &
+		\texttt{resi(K,N)}, \texttt{loss} \\
+		\texttt{dyn\_sensitivity(h,J,U,Uic,w,x0,S0,t)} &
+		\texttt{S\_tdata(K,P,N)}, \texttt{S\_ic\_tdata}, \texttt{x\_tdata},
+		\texttt{t\_sol}, \texttt{x\_sol}, \texttt{S\_sol(K,P,S)}, \texttt{S\_ic\_sol} \\
+		\texttt{dyn\_adjoint(J,U,w,t\_sol,x\_sol,t,resi,...h,x0,x\_tdata)} & \\
+		& 
+		\texttt{a\_tdata(K,N)}, \texttt{a\_0(K,)}, \texttt{grad\_w(P,)},
+		\texttt{t\_adj}, \texttt{a\_adj} \\
+		\texttt{dyn\_estimate\_sensitivity(...)} &
+		\texttt{w\_hat(P,)}, \texttt{x0\_hat(K,)}, \texttt{loss\_hist} \\
+		\texttt{dyn\_estimate\_adjoint(...)} &
+		\texttt{w\_hat}, \texttt{x0\_hat}, \texttt{loss\_hist} \\
+		\bottomrule
+	\end{tabular}
+	
+	\vspace{6pt}
+	
+	\subsection{Differences from the MATLAB suite}
+	
+	\begin{tabular}{@{}L{4.0cm}L{4.8cm}L{4.5cm}@{}}
+		\toprule
+		Aspect & MATLAB & Python \\
+		\midrule
+		Indices & 1-based & 0-based \\
+		Optional functions & Pass \texttt{[]} & Pass \texttt{None} \\
+		Result storage & \texttt{struct} (\texttt{.mat}) & \texttt{dict} (\texttt{.pkl}) \\
+		Results access & \texttt{results.w\_hat\_s} & \texttt{results['w\_hat\_s']} \\
+		Sensitivity idx & \texttt{[1\,1;\,1\,2]} matrix & \texttt{[(0,0),(0,1)]} list of tuples \\
+		Array shapes & $(K{\times}N)$ matrices & $(K,N)$ NumPy arrays \\
+		ODE options & \texttt{odeset('RelTol',...)} & \texttt{rtol=..., atol=...} kwargs \\
+		\bottomrule
+	\end{tabular}
+	
+	\vspace{6pt}
+	
+	\subsection{Output files}
+	
+	\texttt{dyn\_run} writes outputs when \texttt{save\_path} is not \texttt{None}:
+	
+	\begin{itemize}
+		\item \textbf{\texttt{my\_results.pkl}} — Python \texttt{dict} with all results,
+		loadable with \texttt{pickle.load(open('my\_results.pkl','rb'))}.
+		\item \textbf{\texttt{my\_results.tex}} — same \texttt{booktabs} table as the
+		MATLAB version.
+		\item \textbf{\texttt{figures/my\_results\_*.png}} — 300\,dpi PNGs saved
+		via \texttt{matplotlib}; one per quantity (same naming convention as MATLAB).
+	\end{itemize}
+	
+	\medskip
+	\noindent\rule{\linewidth}{0.4pt}
+	\begin{center}
+		\small
+		Suite developed in the context of
+		% \emph{Principles of Imaging} (Barbastathis).
+		the MIT class 2.c01/2.c51, sponsored by the Schwartzman College of Computing.
+		
+		Both platforms implement identical mathematics;
+		numerical results may differ slightly due to floating-point
+		and ODE-solver differences, but should agree to within solver tolerance
+		when initialized from the same starting point.
+	\end{center}
+	
+\end{document}
