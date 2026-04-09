@@ -38,10 +38,34 @@ dynamical-estimation/
 
 ## Requirements
 
-Python 3.10+ with `numpy`, `scipy`, `matplotlib`.
+**Python 3.10 or newer** and the three standard scientific packages.
+Exact version pins are in [`requirements.txt`](requirements.txt):
+
+| Package    | Minimum | Tested on |
+|------------|---------|-----------|
+| Python     | 3.10    | 3.12.13   |
+| numpy      | **2.0** | 2.4.4     |
+| scipy      | 1.11    | 1.17.1    |
+| matplotlib | 3.7     | 3.10.8    |
+
+> ⚠️ **NumPy must be ≥ 2.0.** The adjoint quadrature uses
+> `np.trapezoid`, which only exists from NumPy 2.0 onwards
+> (the old name `np.trapz` was removed in 2.0).
+
+### Setting up a clean virtual environment
 
 ```bash
-pip install numpy scipy matplotlib
+# from inside dynamical-estimation/
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Or, if you prefer `conda`:
+
+```bash
+conda create -n dyn-esti python=3.12 numpy">=2.0" scipy matplotlib
+conda activate dyn-esti
 ```
 
 ## Running
